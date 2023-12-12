@@ -15,3 +15,18 @@ entries:
       - Model Deployment
     git_url: "https://github.com/kevinbtalbert/CML_LLM-HANDS-ON-LABS"
     is_prototype: true
+    
+  - title: Chared LLM Model for Hands on Lab
+    label: llm-model-deployment
+    short_description: |
+      This AMP deploys LLAMA 2 7 billion token model as a CML model, with replicas. Requires GPUs.
+    long_description: |
+      This AMP deploys LLAMA 2 7 billion token model as a CML model, with replicas. Requires GPUs.
+    image_path: "https://raw.githubusercontent.com/ogakulov/shared-fm/main/images/human-ml-unsplash.jpg"
+    tags: 
+      - LLama 7B
+      - LLM
+      - CML Labs
+      - Model Deployment
+    git_url: "https://github.com/ogakulov/shared-fm"
+    is_prototype: true
