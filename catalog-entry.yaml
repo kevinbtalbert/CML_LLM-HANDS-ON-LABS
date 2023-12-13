@@ -1,22 +1,24 @@
 name: Hands on Lab focused on LLMs
 
 entries:
-  - title: Mistral 7B Standalone Model Deployment
+  - title: Hands on Lab Workshop with LLM
     label: llm-model-deploy
     short_description: |
-      This AMP deploys Mistral 7B CPU-based model as a CML API endpoint. Requires a node with 4 vCores and 16 GB memory minimum.
+      This AMP is used for Cloudera Machine Learning Hands on Labs and focuses on CML's integrations with external components as well as running
+      use case entirely in CML.
     long_description: |
-      This AMP deploys Mistral 7B CPU-based model as a CML API endpoint. Requires a node with 4 vCores and 16 GB memory minimum.
+      This AMP is used for Cloudera Machine Learning Hands on Labs and focuses on CML's integrations with external components as well as running
+      use case entirely in CML.
     image_path: "https://raw.githubusercontent.com/kevinbtalbert/CML_LLM-HANDS-ON-LABS/main/assets/amp-cover.png"
     tags: 
       - CML Labs
-      - Mistral 7B
+      - Exercises
       - LLM
       - Model Deployment
     git_url: "https://github.com/kevinbtalbert/CML_LLM-HANDS-ON-LABS"
     is_prototype: true
     
-  - title: Chared LLM Model for Hands on Lab
+  - title: Shared LLM Model for Hands on Lab
     label: llm-model-deployment
     short_description: |
       This AMP deploys LLAMA 2 7 billion token model as a CML model, with replicas. Requires GPUs.
