@@ -8,6 +8,9 @@ from sentence_transformers import SentenceTransformer
 import requests
 import json
 import time
+from typing import Optional
+import boto3
+from botocore.config import Config
 
 from huggingface_hub import hf_hub_download
 
@@ -15,10 +18,6 @@ from huggingface_hub import hf_hub_download
 USE_PINECONE = False # Set this to avoid any Pinecone calls
 
 EMBEDDING_MODEL_REPO = "sentence-transformers/all-mpnet-base-v2"
-GEN_AI_MODEL_REPO = "TheBloke/Llama-2-13B-chat-GGUF"
-GEN_AI_MODEL_FILENAME = "llama-2-13b-chat.Q5_0.gguf"
-
-gen_ai_model_path = hf_hub_download(repo_id=GEN_AI_MODEL_REPO, filename=GEN_AI_MODEL_FILENAME)
 
 
 if USE_PINECONE:
@@ -43,6 +42,81 @@ if USE_PINECONE:
 MODEL_ACCESS_KEY = os.environ["CML_MODEL_KEY"]
 MODEL_ENDPOINT = "https://modelservice.ml-8ac9c78c-674.se-sandb.a465-9q4k.cloudera.site/model?accessKey=" + MODEL_ACCESS_KEY
 
+if os.environ.get("AWS_DEFAULT_REGION") == "":
+    os.environ["AWS_DEFAULT_REGION"] = "us-west-2"
+
+    
+## Setup Bedrock client:
+def get_bedrock_client(
+    assumed_role: Optional[str] = None,
+    endpoint_url: Optional[str] = None,
+    region: Optional[str] = None,
+):
+    """Create a boto3 client for Amazon Bedrock, with optional configuration overrides
+
+    Parameters
+    ----------
+    assumed_role :
+        Optional ARN of an AWS IAM role to assume for calling the Bedrock service. If not
+        specified, the current active credentials will be used.
+    endpoint_url :
+        Optional override for the Bedrock service API Endpoint. If setting this, it should usually
+        include the protocol i.e. "https://..."
+    region :
+        Optional name of the AWS Region in which the service should be called (e.g. "us-east-1").
+        If not specified, AWS_REGION or AWS_DEFAULT_REGION environment variable will be used.
+    """
+    if region is None:
+        target_region = os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION"))
+    else:
+        target_region = region
+
+    print(f"Create new client\n  Using region: {target_region}")
+    session_kwargs = {"region_name": target_region}
+    client_kwargs = {**session_kwargs}
+
+    profile_name = os.environ.get("AWS_PROFILE")
+    if profile_name:
+        print(f"  Using profile: {profile_name}")
+        session_kwargs["profile_name"] = profile_name
+
+    retry_config = Config(
+        region_name=target_region,
+        retries={
+            "max_attempts": 10,
+            "mode": "standard",
+        },
+    )
+    session = boto3.Session(**session_kwargs)
+
+    if assumed_role:
+        print(f"  Using role: {assumed_role}", end='')
+        sts = session.client("sts")
+        response = sts.assume_role(
+            RoleArn=str(assumed_role),
+            RoleSessionName="langchain-llm-1"
+        )
+        print(" ... successful!")
+        client_kwargs["aws_access_key_id"] = response["Credentials"]["AccessKeyId"]
+        client_kwargs["aws_secret_access_key"] = response["Credentials"]["SecretAccessKey"]
+        client_kwargs["aws_session_token"] = response["Credentials"]["SessionToken"]
+
+    if endpoint_url:
+        client_kwargs["endpoint_url"] = endpoint_url
+
+    bedrock_client = session.client(
+        service_name="bedrock-runtime",
+        config=retry_config,
+        **client_kwargs
+    )
+
+    print("boto3 Bedrock client successfully created!")
+    print(bedrock_client._endpoint)
+    return bedrock_client
+
+
+boto3_bedrock = get_bedrock_client(
+      region=os.environ.get("AWS_DEFAULT_REGION", None))
 
 app_css = f"""
         .gradio-header {{
@@ -74,16 +148,8 @@ app_css = f"""
 def main():
     # Configure gradio QA app 
     print("Configuring gradio app")
-    # demo = gradio.Interface(fn=get_responses,
-    #                     title="Enterprise Custom Knowledge Base Chatbot with Llama2",
-    #                     description=,
-    #                     inputs=[gradio.Radio(['Llama-2-7b'], label="Select Model", value="Llama-2-7b"), gradio.Slider(minimum=0.01, maximum=1.0, step=0.01, value=0.5, label="Select Temperature (Randomness of Response)"), gradio.Radio(["50", "100", "250", "500", "1000"], label="Select Number of Tokens (Length of Response)", value="250"), gradio.Textbox(label="Question", placeholder="Enter your question here.")],
-    #                     outputs=[gradio.Textbox(label="Llama2 7B Model Response"), gradio.Textbox(label="Context Data Source(s)"), gradio.Textbox(label="Pinecone Match Score")],
-    #                     allow_flagging="never",
-    #                     css=app_css)
 
-    DESC = "This AI-powered assistant uses Cloudera DataFlow (NiFi) to scrape a website's sitemap and create a knowledge base. The information it provides as a response is context driven by what is available at the scraped websites. It uses Meta's open-source Llama2 model and the sentence transformer model all-mpnet-base-v2 to evaluate context and form an accurate response from the semantic search. It is fine tuned for questions stemming from topics in its knowledge base, and as such may have limited knowledge outside of this domain. As is always the case with prompt engineering, the better your prompt, the more accurate and specific the response."
-    
+    DESC = "This AI-powered assistant showcases the flexibility of Cloudera Machine Learning to work with 3rd party LLMs and "
     
     # Create the Gradio Interface
     demo = gr.ChatInterface(
@@ -91,9 +157,10 @@ def main():
         #examples=["What is Cloudera?", "What is Apache Spark?"], 
         title="Enterprise Custom Knowledge Base Chatbot with Llama2",
         description = DESC,
-        additional_inputs=[gr.Radio(['Llama-2-7b'], label="Select Model", value="Llama-2-7b"), 
+        additional_inputs=[gr.Radio(['Local Llama 2 7B', 'AWS Bedrock Claude v2.1'], label="Select Foundational Model", value="Local Llama 2 7B"), 
                            gr.Slider(minimum=0.01, maximum=1.0, step=0.01, value=0.5, label="Select Temperature (Randomness of Response)"),
-                           gr.Radio(["50", "100", "250", "500", "1000"], label="Select Number of Tokens (Length of Response)", value="250")],
+                           gr.Radio(["50", "100", "250", "500", "1000"], label="Select Number of Tokens (Length of Response)", value="250"),
+                           gr.Radio(['None', 'Pinecone', 'Local Chroma'], label="Vector Database Choices", value="None")],
         css = app_css,
         retry_btn = None,
         undo_btn = None,
@@ -111,15 +178,13 @@ def main():
     print("Gradio app ready")
 
 # Helper function for generating responses for the QA app
-def get_responses(message, history, model, temperature, token_count):
+def get_responses(message, history, model, temperature, token_count, vector_db):
     
+    #print("%s %s %s %s" % (model, temperature, token_count, vector_db))
+    # AWS Bedrock Claude v2.1 0.5 50 Chroma
     
-    if USE_PINECONE:
-        context_chunk, sources, score = get_nearest_chunk_from_pinecone_vectordb(index, question)
-        response = get_llama2_response_with_context(question, context_chunk, temperature, token_count)
-        return response, sources, score
-    else:
-        # Essentially no context, for now
+    if model == "Local Llama 2 7B":
+        # Essentially no context, for now <--- this is a STUB to update with Chroma call
         context_chunk = "Cloudea is an Open Lakehouse Company"
         sources = ""
         score = ""
@@ -129,8 +194,36 @@ def get_responses(message, history, model, temperature, token_count):
         for i in range(len(response)):
             time.sleep(0.02)
             yield response[: i+1]
+    
+    elif model == "AWS Bedrock Claude v2.1":
+        # TODO: make AWS Bedrock call
+        context_chunk = "Cloudea is an Open Lakehouse Company"
+        sources = ""
+        score = ""
+        response = get_bedrock_response_with_context(message, context_chunk, temperature, token_count)
         
-        #return response, sources, score
+        for i in range(len(response)):
+            time.sleep(0.02)
+            yield response
+    
+    
+#     if USE_PINECONE:
+#         context_chunk, sources, score = get_nearest_chunk_from_pinecone_vectordb(index, question)
+#         response = get_llama2_response_with_context(question, context_chunk, temperature, token_count)
+#         return response, sources, score
+#     else:
+#         # Essentially no context, for now
+#         context_chunk = "Cloudea is an Open Lakehouse Company"
+#         sources = ""
+#         score = ""
+#         response = get_llama2_response_with_context(message, context_chunk, temperature, token_count)
+        
+#         #response = f"System prompt: {system_prompt}\n Message: {message}."
+#         for i in range(len(response)):
+#             time.sleep(0.02)
+#             yield response[: i+1]
+        
+#         #return response, sources, score
     
 
 
@@ -164,7 +257,37 @@ def load_context_chunk_from_data(id_path):
     with open(id_path, "r") as f: # Open file in read mode
         return f.read()
 
-  
+
+def get_bedrock_response_with_context(question, context, temperature, token_count):
+    instruction_text = """Human: You are a helpful, honest, and courteous assistant. If you don't know the answer, simply state I don't know the answer to that question. Answer the following question: {{USER_TEXT}}
+                    Assistant:"""
+    
+    input_text = question
+
+    # Replace instruction placeholder to build a complete prompt
+    full_prompt = instruction_text.replace("{{USER_TEXT}}", input_text)
+    
+    # Model expects a JSON object with a defined schema
+    body = json.dumps({"prompt": full_prompt,
+             "max_tokens_to_sample":int(token_count),
+             "temperature":0.6,
+             "top_k":250,
+             "top_p":1.0,
+             "stop_sequences":[]
+              })
+
+    # Provide a model ID and call the model with the JSON payload
+    modelId = 'anthropic.claude-v2:1'
+    response = boto3_bedrock.invoke_model(body=body, modelId=modelId, accept='application/json', contentType='application/json')
+    response_body = json.loads(response.get('body').read())
+    print("Model results successfully retreived")
+    
+    result = response_body.get('completion')
+    #print(response_body)
+    
+    return result
+
+    
 # Pass through user input to LLM model with enhanced prompt and stop tokens
 def get_llama2_response_with_context(question, context, temperature, token_count):
 
@@ -173,15 +296,6 @@ def get_llama2_response_with_context(question, context, temperature, token_count
     question_and_context = question + " Here is the context: " + str(context)
 
     try:
-        #params = {
-        #    "prompt": str(question_and_context)
-        #}
-        
-        ## TO DO CONVERT TO USE CML MODEL
-        # response = llama2_model(prompt=question_and_context, **params)
-
-        # model_out = response['choices'][0]['text']
-        # return model_out
         
         # Following LLama's spec for prompt engineering
         llama_sys = f"<<SYS>>\n You are a helpful, respectful and honest assistant. If you are unsurae about an answer, truthfully say \"I don't know\".\n<</SYS>>\n\n"
